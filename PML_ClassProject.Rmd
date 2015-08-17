@@ -1,0 +1,132 @@
+---
+title: "Practical Machine Learning"
+author: "Moira Lennox"
+date: "August 11, 2015"
+output: html_document
+---
+
+
+## Executive Summary
+The goal of the project will be to use data from accelerometers on the belt, forearm, arm, and dumbbell of 6 participants to predict the manner in which they did the exercise.The participants were asked to perform barbell lifts correctly and incorrectly in 5 different ways. The outcome of the prediction is classified in 5 classes, one performing it correctly (class “A”) and 4 incorrectly (classes “B”, “C”, “D”, and “E”).
+
+* Class A - exactly according to the specification
+* Class B - throwing the elbows to the front
+* Class C - lifting the dumbbell only halfway
+* Class D - lowering the dumbbell only halfway
+* Class E - throwing the hips to the front
+
+More information is available from the website: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+## Load Packages 
+```{r setup,echo=TRUE} 
+# get packages that are needed
+library(ggplot2)
+library(caret)
+library(rpart)
+library(randomForest)
+```
+
+## Load Data 
+Load the data and review the data at a highlevel.
+
+```{rload ,echo=TRUE}
+# set working directory
+setwd("/Users/moiralennox/GitHub/Practical_Machine_Learning")
+# load data make all blanks, null = NA
+dftraining <- read.csv("./data/pml-training.csv", na.string=c("","NA","NULL"), row.names = 1)
+dftesting <- read.csv("./data/pml-testing.csv", na.string=c("","NA","NULL"), row.names = 1)
+dim(dftraining); dim(dftesting)
+```
+
+## Clean Data & Transform
+In this section I clean up the data by removing columns that have NAs and that might have other issues. Making sure columns are numeric and vectors have be converted and removing the first 6 columns that are more metadata than actual attributes about the data. Then I run the near zero variance function to find predictors that might have only a handful of unique values that occur with very low frequencies, since these columns can cause the model to fail or be unstable. There are no NZVs so all columns will be kept.
+
+```{rclean ,echo=TRUE}
+dfcleanData <- dftraining[,which(as.numeric(colSums(is.na(dftraining)))==0)]
+dfcleanData <- dfcleanData[,-c(1:6)]
+
+dfcleanDataTest <- dftesting[,which(as.numeric(colSums(is.na(dftraining)))==0)]
+dfcleanDataTest <- dfcleanDataTest[,-c(1:6)]
+# Remove near zero covariates
+NZV <- nearZeroVar(dfcleanData, saveMetrics=TRUE)
+# They are all False so no they are good to keep them all.
+```
+
+## Splitting Data into Testing and Cross-Validation
+The seed was set for reproducible and then the training data was divided into two parts, one for training (60%) and the other for testing(40%). The data was partioned by the "classe" variable to ensure the training set and test set contain examples of each class. 
+
+```{rsplit ,echo=TRUE}
+set.seed(1234)
+index_train <- createDataPartition(y=dfcleanData$classe, p=0.60, list=FALSE)
+data_train <- dfcleanData[index_train,]
+data_xval <- dfcleanData[-index_train,]
+dim(data_train);dim(data_xval)
+```
+
+## Model 1: Classification Trees (method = rpart)
+The classification trees model was initially used to do prediction with no preprocessing and cross validation. I decide to run just the basic model to see what happens.
+
+```{rmod1 ,echo=TRUE}
+modFit <- train(classe ~ .,method="rpart",data=data_train)
+print(modFit)
+#  
+
+# show the top 20 most important variables
+modFitImp <- varImp(modFit, scale = FALSE)
+modFitImp
+
+print(modFit$finalModel)
+
+# visualize the relationship between the resampled performance values and the number of PLS components.
+plot(modFit)
+
+confusionMatrix(data_xval$classe,predict(modFit,data_xval))
+```
+
+By default this model used a simple bootstrap resampling method with 11776 samples on 52 predictor.
+
+The above model has an accuracy of 49% which is not very good. The Sensitivity and the Specificity is also well below 50%, so I try a different model. 
+
+## Model 2: Random Forest (method = rf)
+```{rmod2 ,echo=TRUE}
+modFit2 <- train(classe~.,data=data_train,method="rf",trControl = trainControl(method="cv",number=4,allowParallel=TRUE))
+print(modFit2)
+
+# show the top 20 most important variables
+modFitImp <- varImp(modFit2, scale = FALSE)
+modFitImp
+
+print(modFit2$finalModel)
+# visualize the relationship between the resampled performance values and the number of PLS components.
+
+plot(modFit2)
+
+confusionMatrix(data_xval$classe,predict(modFit2,data_xval))
+
+```
+
+With a random forest model I do no preprocessing but I do 4 k fold cross validation using the "traincontrol" function.
+Since we are going to apply a non-parametric model (random forests), no preprocessing is needed to transform the variables because the random forest construction already includes enough subsampling.
+
+The plot shows that the error does decrease with the number of trees around.
+
+Overall accuracy is calculated at just over 99%. The classifier seems to be doing a good job of classifying items.
+The sensitivity and specificity respectively help us measure the performance of the classifier with all Classes having percentages greater than 95%. The five most important predictors in this model are:roll_belt, yaw_belt, magnet_dumbbell_y, magnet_dumbbell_z, pitch_forearm. The kappa value greater than 0.8 means a statistically perfect model 
+
+
+## Applying Random Forest Model To Test Set
+```{rmodtest ,echo=TRUE}
+predict_answers <- predict(modFit2,dfcleanDataTest)
+print(predict_answers)
+```
+
+## In Sample & Out of Sample Error
+For the selected model (aka Random Forest Model) both the accuracy and the kappa indicator of concordance indicate that the predictor seems to have a low out of sample error rate.
+
+```{rerr ,echo=TRUE}
+verr <- (1-0.99)
+print(verr)
+```
+
+## Conclusion
+The random forest model does a good job of predicting activities from accelerometers measurements.
